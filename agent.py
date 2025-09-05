@@ -261,7 +261,12 @@ Respond ONLY in valid JSON:
             
             if decision["action"] == "call_weather_api":
                 print("Calling weather API...")
-                result = await self.call_mcp_tool("weather_api", decision["params"])
+                # Add target date from query analysis if not in params
+                weather_params = decision.get("params", {})
+                if "target_date" not in weather_params:
+                    weather_params["target_date"] = query_analysis.get("time_context", "tomorrow")
+                
+                result = await self.call_mcp_tool("weather_api", weather_params)
                 context["weather_data"] = result
                 context["tools_called"].append("weather_api")
                 

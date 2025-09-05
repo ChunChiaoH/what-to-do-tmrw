@@ -28,8 +28,31 @@ server = Server("what-to-do-server")
 WEATHER_API_KEY = os.getenv("WEATHERAPI_KEY")
 WEATHER_BASE_URL = "http://api.weatherapi.com/v1"
 
-# Activity data - this could later be replaced with external API
-ACTIVITIES = {
+# Foursquare Places API configuration
+FOURSQUARE_API_KEY = os.getenv("FOURSQUARE_API_KEY")
+FOURSQUARE_BASE_URL = "https://places-api.foursquare.com"
+
+# Category mappings for Foursquare API
+FOURSQUARE_CATEGORIES = {
+    "indoor": {
+        "culture": ["10000", "10027", "10028", "10029"],  # Arts & Entertainment, Museums, Galleries, Libraries
+        "shopping": ["17000", "17001", "17069"],  # Retail, Shopping Malls, Markets
+        "entertainment": ["10000", "10032", "10041"],  # Entertainment, Movie Theaters, Gaming
+        "fitness": ["18000", "18021", "18001"],  # Sports & Recreation, Gyms, Fitness
+        "learning": ["12000", "12062"],  # Education, Classes
+        "relaxation": ["18058", "12000"]  # Spas, Wellness
+    },
+    "outdoor": {
+        "nature": ["16000", "16032", "16014"],  # Outdoors & Recreation, Parks, Gardens  
+        "water": ["16048", "16025"],  # Beaches, Water Sports
+        "adventure": ["16000", "16034"],  # Outdoors, Hiking
+        "sightseeing": ["15000", "15014"],  # Travel & Transport, Scenic Points
+        "fitness": ["18000", "18042"]  # Sports, Outdoor Sports
+    }
+}
+
+# Fallback activity data for when API is unavailable
+FALLBACK_ACTIVITIES = {
     "indoor": [
         {"name": "Visit Museums", "category": "culture", "description": "Explore local museums and galleries"},
         {"name": "Shopping Malls", "category": "shopping", "description": "Browse shopping centers and markets"},
@@ -73,8 +96,12 @@ async def handle_list_tools() -> list[Tool]:
                     },
                     "forecast_days": {
                         "type": "integer",
-                        "description": "Number of forecast days to retrieve (1-10, default: 1)",
-                        "default": 1
+                        "description": "Number of forecast days to retrieve (1-10, default: 3)",
+                        "default": 3
+                    },
+                    "target_date": {
+                        "type": "string", 
+                        "description": "Target date for weather (e.g., 'today', 'tomorrow', 'this weekend', or specific date like '2025-09-07')"
                     },
                     "include_hourly": {
                         "type": "boolean",
@@ -128,10 +155,45 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
         raise ValueError(f"Unknown tool: {name}")
 
 
+def parse_target_date(target_date: str) -> Dict[str, Any]:
+    """Parse target date string and return date info"""
+    from datetime import datetime, timedelta
+    import re
+    
+    today = datetime.now().date()
+    result = {"date": None, "description": target_date or "tomorrow"}
+    
+    if not target_date or target_date.lower() in ["tomorrow", "tmrw"]:
+        result["date"] = today + timedelta(days=1)
+    elif target_date.lower() == "today":
+        result["date"] = today
+    elif target_date.lower() in ["this weekend", "weekend"]:
+        # Find next Saturday
+        days_until_saturday = (5 - today.weekday()) % 7
+        if days_until_saturday == 0 and today.weekday() == 5:  # It's Saturday
+            result["date"] = today
+        else:
+            result["date"] = today + timedelta(days=days_until_saturday if days_until_saturday > 0 else 6)
+    elif target_date.lower() in ["next week", "next monday"]:
+        days_until_monday = (7 - today.weekday()) % 7
+        result["date"] = today + timedelta(days=days_until_monday if days_until_monday > 0 else 7)
+    else:
+        # Try to parse as date string (YYYY-MM-DD format)
+        try:
+            result["date"] = datetime.strptime(target_date, "%Y-%m-%d").date()
+        except ValueError:
+            # Default to tomorrow if parsing fails
+            result["date"] = today + timedelta(days=1)
+            result["description"] = "tomorrow (default)"
+    
+    return result
+
+
 async def weather_api_tool(arguments: dict) -> list[TextContent]:
-    """Weather API MCP Tool - Gets weather data from WeatherAPI.com"""
+    """Weather API MCP Tool - Gets weather data from WeatherAPI.com with flexible date support"""
     location = arguments.get("location")
-    forecast_days = arguments.get("forecast_days", 1)
+    forecast_days = arguments.get("forecast_days", 3)
+    target_date = arguments.get("target_date")
     include_hourly = arguments.get("include_hourly", True)
     
     if not location:
@@ -141,6 +203,10 @@ async def weather_api_tool(arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps({"error": "Weather API key not configured"}))]
     
     try:
+        # Parse target date
+        date_info = parse_target_date(target_date)
+        target_date_obj = date_info["date"]
+        
         # WeatherAPI.com endpoint for current weather + forecast
         url = f"{WEATHER_BASE_URL}/forecast.json"
         params = {
@@ -168,6 +234,11 @@ async def weather_api_tool(arguments: dict) -> list[TextContent]:
                 },
                 "timezone": data["location"]["tz_id"],
                 "local_time": data["location"]["localtime"]
+            },
+            "target_date": {
+                "requested": target_date or "tomorrow",
+                "resolved": target_date_obj.isoformat(),
+                "description": date_info["description"]
             },
             "current_weather": {
                 "temperature_c": data["current"]["temp_c"],
@@ -230,37 +301,103 @@ async def weather_api_tool(arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps(error_result))]
 
 
+async def get_foursquare_places(location: str, activity_type: str, category: str = None) -> List[Dict]:
+    """Get places from Foursquare API"""
+    if not FOURSQUARE_API_KEY:
+        return []
+    
+    try:
+        # Determine categories to search for
+        categories = []
+        if category and activity_type in FOURSQUARE_CATEGORIES:
+            if category in FOURSQUARE_CATEGORIES[activity_type]:
+                categories = FOURSQUARE_CATEGORIES[activity_type][category]
+        else:
+            # Get all categories for the activity type
+            if activity_type in FOURSQUARE_CATEGORIES:
+                for cat_list in FOURSQUARE_CATEGORIES[activity_type].values():
+                    categories.extend(cat_list)
+        
+        if not categories:
+            return []
+        
+        # Search places using Foursquare Places API
+        url = f"{FOURSQUARE_BASE_URL}/places/search"
+        headers = {
+            "Authorization": f"Bearer {FOURSQUARE_API_KEY}",
+            "accept": "application/json",
+            "X-Places-Api-Version": "2025-06-17"
+        }
+        params = {
+            "near": location,  # Use "near" parameter for location
+            "categories": ",".join(categories[:5]),  # Limit categories  
+            "limit": 10
+        }
+        
+        response = requests.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        data = response.json()
+        
+        # Format results
+        places = []
+        for result in data.get("results", []):
+            place = {
+                "name": result["name"],
+                "category": category or "general",
+                "description": result.get("location", {}).get("formatted_address", ""),
+                "rating": result.get("rating", 0) / 10.0 if result.get("rating") else None,  # Convert to 0-1 scale
+                "source": "foursquare"
+            }
+            places.append(place)
+        
+        return places[:8]  # Limit to 8 results
+        
+    except Exception as e:
+        print(f"Foursquare API error: {e}")
+        return []
+
+
 async def activity_api_tool(arguments: dict) -> list[TextContent]:
-    """Activity API MCP Tool - Gets activity recommendations"""
+    """Activity API MCP Tool - Gets activity recommendations from Foursquare API"""
     location = arguments.get("location", "")
     weather_condition = arguments.get("weather_condition", "").lower()
     activity_type = arguments.get("activity_type", "both")
     category = arguments.get("category")
     
     try:
-        # Determine activity recommendations based on inputs
+        # Determine activity type based on weather if "both" is specified
+        resolved_activity_type = activity_type
+        if activity_type == "both":
+            if any(word in weather_condition for word in ["rain", "storm", "snow", "drizzle", "shower"]):
+                resolved_activity_type = "indoor"
+            elif any(word in weather_condition for word in ["sunny", "clear", "fair"]):
+                resolved_activity_type = "outdoor"
+        
         recommended_activities = []
         
-        if activity_type == "both":
-            # Auto-determine based on weather if not specified
-            if any(word in weather_condition for word in ["rain", "storm", "snow", "drizzle", "shower"]):
-                activity_type = "indoor"
-            elif any(word in weather_condition for word in ["sunny", "clear", "fair"]):
-                activity_type = "outdoor"
-            else:
-                # Include both types for mixed weather
-                recommended_activities.extend(ACTIVITIES["indoor"][:3])
-                recommended_activities.extend(ACTIVITIES["outdoor"][:3])
+        # Try to get real data from Foursquare API
+        if resolved_activity_type in ["indoor", "outdoor"]:
+            foursquare_places = await get_foursquare_places(location, resolved_activity_type, category)
+            recommended_activities.extend(foursquare_places)
+        elif resolved_activity_type == "both":
+            # Get both indoor and outdoor activities
+            indoor_places = await get_foursquare_places(location, "indoor", category)
+            outdoor_places = await get_foursquare_places(location, "outdoor", category)
+            recommended_activities.extend(indoor_places[:4])
+            recommended_activities.extend(outdoor_places[:4])
         
-        if activity_type in ["indoor", "outdoor"] and not recommended_activities:
-            recommended_activities = ACTIVITIES.get(activity_type, [])
-        
-        # Filter by category if specified
-        if category and recommended_activities:
-            recommended_activities = [act for act in recommended_activities if act["category"] == category]
-        
-        # Limit results
-        recommended_activities = recommended_activities[:8]
+        # Fallback to static data if API fails or no results
+        if not recommended_activities:
+            print("Using fallback activity data")
+            if resolved_activity_type == "both":
+                recommended_activities.extend(FALLBACK_ACTIVITIES["indoor"][:3])
+                recommended_activities.extend(FALLBACK_ACTIVITIES["outdoor"][:3])
+            elif resolved_activity_type in FALLBACK_ACTIVITIES:
+                recommended_activities = FALLBACK_ACTIVITIES[resolved_activity_type][:8]
+            
+            # Filter by category if specified
+            if category and recommended_activities:
+                recommended_activities = [act for act in recommended_activities if act["category"] == category]
         
         # Format the activity API response
         activity_result = {
@@ -269,11 +406,12 @@ async def activity_api_tool(arguments: dict) -> list[TextContent]:
             "query_parameters": {
                 "weather_condition": weather_condition,
                 "requested_activity_type": arguments.get("activity_type", "both"),
-                "resolved_activity_type": activity_type,
+                "resolved_activity_type": resolved_activity_type,
                 "category_filter": category
             },
-            "activities": recommended_activities,
-            "total_results": len(recommended_activities)
+            "activities": recommended_activities[:8],  # Limit to 8 results
+            "total_results": len(recommended_activities[:8]),
+            "data_source": "foursquare" if any(act.get("source") == "foursquare" for act in recommended_activities) else "fallback"
         }
         
         return [TextContent(type="text", text=json.dumps(activity_result, indent=2))]
