@@ -6,12 +6,14 @@ Implements Agent Loop pattern with LLM-driven decision making and MCP tools
 import asyncio
 import json
 import os
+import logging
 from typing import Dict, List, Optional, Any
 from openai import OpenAI
 from dotenv import load_dotenv
 import subprocess
 import sys
 from prompts import get_query_analyzer_prompt, get_decision_engine_prompt, get_response_generator_prompt
+from config.logging_config import setup_logging
 
 load_dotenv()
 
@@ -27,6 +29,8 @@ class WhatToDoAgent:
     def __init__(self):
         self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         self.mcp_server_process = None
+        self.logger, _ = setup_logging()
+        self.logger = logging.getLogger('agent')
         
     async def start_mcp_server(self):
         """Start the MCP server as a subprocess and initialize connection"""
@@ -38,13 +42,13 @@ class WhatToDoAgent:
                 stderr=subprocess.PIPE,
                 text=True
             )
-            print("MCP server started")
+            self.logger.info("MCP server started")
             
             # Initialize MCP connection
             await self.initialize_mcp_connection()
             
         except Exception as e:
-            print(f"Failed to start MCP server: {e}")
+            self.logger.error(f"Failed to start MCP server: {e}")
 
     async def initialize_mcp_connection(self):
         """Initialize MCP protocol connection"""
@@ -82,14 +86,14 @@ class WhatToDoAgent:
                 self.mcp_server_process.stdin.write(json.dumps(initialized_notification) + "\n")
                 self.mcp_server_process.stdin.flush()
                 
-                print("MCP connection initialized successfully")
+                self.logger.info("MCP connection initialized successfully")
                 return True
             else:
-                print(f"MCP initialization failed: {response}")
+                self.logger.error(f"MCP initialization failed: {response}")
                 return False
                 
         except Exception as e:
-            print(f"Failed to initialize MCP connection: {e}")
+            self.logger.error(f"Failed to initialize MCP connection: {e}")
             return False
 
     def analyze_initial_query(self, query: str) -> Dict[str, Any]:
@@ -108,7 +112,7 @@ class WhatToDoAgent:
             return json.loads(content)
             
         except Exception as e:
-            print(f"Query analysis failed: {e}")
+            self.logger.error(f"Query analysis failed: {e}")
             return {"error": f"Failed to analyze query: {str(e)}"}
 
     def decide_next_action(self, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -163,7 +167,7 @@ class WhatToDoAgent:
             return json.loads(content)
             
         except Exception as e:
-            print(f"Decision making failed: {e}")
+            self.logger.error(f"Decision making failed: {e}")
             return {"action": "respond_to_user", "error": f"Decision failed: {str(e)}"}
 
     async def call_mcp_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -204,7 +208,7 @@ class WhatToDoAgent:
 
     async def agent_loop(self, query: str) -> str:
         """Main Agent Loop - iterative decision making with LLM"""
-        print(f"Starting agent loop for: {query}")
+        self.logger.info(f"Starting agent loop for: {query}")
         
         # Initialize context
         context = {
@@ -220,7 +224,7 @@ class WhatToDoAgent:
             return f"ERROR: {query_analysis['error']}"
         
         context["query_analysis"] = query_analysis
-        print(f"Query analysis: {query_analysis}")
+        self.logger.info(f"Query analysis: {query_analysis}")
         
         # Check if location is available
         if not query_analysis.get("location"):
@@ -229,14 +233,14 @@ class WhatToDoAgent:
         # Step 2: Agent Loop
         while context["loop_count"] < context["max_loops"]:
             context["loop_count"] += 1
-            print(f"\nAgent loop iteration {context['loop_count']}")
+            self.logger.info(f"Agent loop iteration {context['loop_count']}")
             
             # LLM decides next action
             decision = self.decide_next_action(context)
-            print(f"Decision: {decision.get('reasoning', 'No reasoning provided')}")
+            self.logger.info(f"Decision: {decision.get('reasoning', 'No reasoning provided')}")
             
             if decision["action"] == "call_weather_api":
-                print("Calling weather API...")
+                self.logger.info("Calling weather API...")
                 # Use LLM-provided parameters, but add fallback logic
                 weather_params = decision.get("params", {})
                 if "target_date" not in weather_params and "time_context" in query_analysis:
@@ -249,12 +253,12 @@ class WhatToDoAgent:
                 context["tools_called"].append("weather_api")
                 
                 if result.get("success"):
-                    print("SUCCESS: Weather data retrieved")
+                    self.logger.info("SUCCESS: Weather data retrieved")
                 else:
-                    print(f"WARNING: Weather API failed: {result.get('error')}")
+                    self.logger.warning(f"Weather API failed: {result.get('error')}")
             
             elif decision["action"] == "call_activity_api":
-                print("Calling activity API...")
+                self.logger.info("Calling activity API...")
                 result = await self.call_mcp_tool("activity_api", decision["params"])
                 
                 # Store activity data (can have multiple calls)
@@ -265,16 +269,16 @@ class WhatToDoAgent:
                 context["tools_called"].append("activity_api")
                 
                 if result.get("success"):
-                    print(f"SUCCESS: Activity data retrieved ({result['total_results']} activities)")
+                    self.logger.info(f"SUCCESS: Activity data retrieved ({result['total_results']} activities)")
                 else:
-                    print(f"WARNING: Activity API failed: {result.get('error')}")
+                    self.logger.warning(f"Activity API failed: {result.get('error')}")
             
             elif decision["action"] == "respond_to_user":
-                print("Generating final response...")
+                self.logger.info("Generating final response...")
                 break
             
             else:
-                print(f"WARNING: Unknown action: {decision['action']}")
+                self.logger.warning(f"Unknown action: {decision['action']}")
                 break
         
         # Step 3: Generate final response
@@ -359,13 +363,26 @@ class WhatToDoAgent:
             return response.choices[0].message.content.strip()
             
         except Exception as e:
-            print(f"Response generation failed: {e}")
+            self.logger.error(f"Response generation failed: {e}")
             # Fallback to simple response
             return f"I encountered an error while preparing your response. Please try asking again."
 
 
-    async def chat(self):
-        """Interactive chat interface"""
+    async def chat_ui(self, user_input: str) -> str:
+        """Simple chat interface for UI integration (clean, no debug output)"""
+        try:
+            await self.start_mcp_server()
+            response = await self.agent_loop(user_input)
+            return response
+        except Exception as e:
+            self.logger.error(f"Chat UI error: {e}")
+            return f"Sorry, I encountered an error: {str(e)}"
+        finally:
+            if self.mcp_server_process:
+                self.mcp_server_process.terminate()
+
+    async def chat_cli(self):
+        """Interactive CLI chat interface"""
         print("What To Do Tomorrow Agent")
         print("Ask me: 'What can I do tomorrow in [city]?'")
         print("Type 'quit' to exit\n")
@@ -402,7 +419,7 @@ class WhatToDoAgent:
 
 async def main():
     agent = WhatToDoAgent()
-    await agent.chat()
+    await agent.chat_cli()
 
 
 if __name__ == "__main__":

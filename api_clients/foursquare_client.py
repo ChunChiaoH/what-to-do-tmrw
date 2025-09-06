@@ -4,6 +4,7 @@ Foursquare Places API client
 import os
 import requests
 import random
+import logging
 from typing import Dict, List, Any
 from config.categories import FOURSQUARE_CATEGORIES, CITY_COORDINATES, RADIUS_OPTIONS
 
@@ -14,6 +15,7 @@ class FoursquareClient:
     def __init__(self):
         self.api_key = os.getenv("FOURSQUARE_API_KEY")
         self.base_url = "https://places-api.foursquare.com"
+        self.logger = logging.getLogger('api_clients.foursquare')
     
     def _get_search_categories(self, activity_type: str, category: str = None, variety: bool = True) -> List[str]:
         """Get Foursquare category IDs for search based on activity type and preferences"""
@@ -116,7 +118,7 @@ class FoursquareClient:
             params = self._build_search_params(location, categories, variety)
             
             # Debug output
-            print(f"Foursquare search: {location}, categories: {params['categories'][:50]}..., radius: {params.get('radius', 'default')}")
+            self.logger.info(f"Foursquare search: {location}, categories: {params['categories'][:50]}..., radius: {params.get('radius', 'default')}")
             
             # Call Foursquare API
             response = requests.get(
@@ -129,7 +131,7 @@ class FoursquareClient:
                 params=params
             )
             if response.status_code != 200:
-                print(f"Foursquare API error {response.status_code}: {response.text}")
+                self.logger.error(f"Foursquare API error {response.status_code}: {response.text}")
             response.raise_for_status()
             data = response.json()
             
@@ -144,5 +146,5 @@ class FoursquareClient:
             return places[:8]  # Limit to 8 results
             
         except Exception as e:
-            print(f"Foursquare API error: {e}")
+            self.logger.error(f"Foursquare API error: {e}")
             return []

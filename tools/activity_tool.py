@@ -2,6 +2,7 @@
 Activity API MCP Tool
 """
 import json
+import logging
 from typing import List
 from mcp.types import TextContent
 from api_clients.foursquare_client import FoursquareClient
@@ -37,7 +38,7 @@ async def activity_api_tool(arguments: dict) -> List[TextContent]:
             activities = indoor[:4] + outdoor[:4]
         
         if not activities:
-            print("No activities found from Foursquare API")
+            logging.getLogger('api_clients.foursquare').warning("No activities found from Foursquare API")
         
         return [TextContent(type="text", text=json.dumps({
             "success": True,
