@@ -11,8 +11,17 @@ from openai import OpenAI
 from dotenv import load_dotenv
 import subprocess
 import sys
+from prompts import QUERY_ANALYZER_PROMPT, DECISION_ENGINE_PROMPT, RESPONSE_GENERATOR_PROMPT
 
 load_dotenv()
+
+# Agent configuration
+AGENT_CONFIG = {
+    "model": "gpt-3.5-turbo",
+    "query_temperature": 0.1,
+    "decision_temperature": 0.2,
+    "max_loops": 5
+}
 
 class WhatToDoAgent:
     def __init__(self):
@@ -85,29 +94,14 @@ class WhatToDoAgent:
 
     def analyze_initial_query(self, query: str) -> Dict[str, Any]:
         """LLM analyzes the user query and extracts key information"""
-        system_prompt = """You are a query analyzer for a "What to do tomorrow" agent.
-
-Extract information from the user's query:
-1. location - the city/location they're asking about  
-2. activity_preferences - any specific activity types or categories mentioned
-3. time_context - when they want to do activities (tomorrow, today, etc.)
-
-Respond ONLY in valid JSON format:
-{"location": "city_name_or_null", "activity_preferences": "description_or_null", "time_context": "when"}
-
-Examples:
-"What can I do tomorrow in Sydney?" → {"location": "Sydney", "activity_preferences": null, "time_context": "tomorrow"}
-"Indoor activities in Melbourne today" → {"location": "Melbourne", "activity_preferences": "indoor activities", "time_context": "today"}
-"Cultural things to do in Brisbane tomorrow" → {"location": "Brisbane", "activity_preferences": "cultural activities", "time_context": "tomorrow"}"""
-
         try:
             response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model=AGENT_CONFIG["model"],
                 messages=[
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system", "content": QUERY_ANALYZER_PROMPT},
                     {"role": "user", "content": query}
                 ],
-                temperature=0.1
+                temperature=AGENT_CONFIG["query_temperature"]
             )
             
             content = response.choices[0].message.content.strip()
@@ -145,44 +139,26 @@ Examples:
             if activity.get("success"):
                 context_summary["data_collected"]["activities"] = {
                     "count": activity["total_results"],
-                    "type": activity["query_parameters"]["resolved_activity_type"]
+                    "type": activity["query_parameters"]["resolved_activity_type"],
+                    "data_source": activity.get("data_source", "unknown"),
+                    "activities": activity.get("activities", [])  # Include actual activity list
                 }
             else:
                 context_summary["data_collected"]["activities"] = {"error": activity.get("error")}
         
-        system_prompt = """You are the decision engine for a "What to do tomorrow" agent.
-
-Based on the current context, decide what to do next.
-
-Available actions:
-1. "call_weather_api" - Get weather information for a location
-2. "call_activity_api" - Get activity recommendations  
-3. "respond_to_user" - Generate final response (when you have sufficient information)
-
-Available MCP tools:
-- weather_api: needs {"location": "city_name", "forecast_days": 1, "include_hourly": true}
-- activity_api: needs {"location": "city_name", "weather_condition": "optional", "activity_type": "indoor/outdoor/both", "category": "optional"}
-
-Decision logic:
-- If no location identified: respond with error
-- If no weather data yet: call weather_api first
-- If have weather but no activities: call activity_api with weather-informed parameters
-- If weather suggests different activity type than what we have: call activity_api again
-- If have weather + appropriate activities: respond_to_user
-
-Respond ONLY in valid JSON:
-{"action": "call_weather_api|call_activity_api|respond_to_user", "tool": "weather_api|activity_api|null", "params": {...}, "reasoning": "brief_explanation"}"""
-
         try:
             response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model=AGENT_CONFIG["model"],
                 messages=[
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system", "content": DECISION_ENGINE_PROMPT},
                     {"role": "user", "content": f"Current context: {json.dumps(context_summary, indent=2)}"}
                 ],
-                temperature=0.2
+                temperature=AGENT_CONFIG["decision_temperature"]
             )
-            
+            print('***************')
+            print(DECISION_ENGINE_PROMPT)
+            print('***************')
+            print(context_summary)
             content = response.choices[0].message.content.strip()
             return json.loads(content)
             
@@ -235,7 +211,7 @@ Respond ONLY in valid JSON:
             "query": query,
             "tools_called": [],
             "loop_count": 0,
-            "max_loops": 5  # Prevent infinite loops
+            "max_loops": AGENT_CONFIG["max_loops"]
         }
         
         # Step 1: Analyze the initial query
@@ -303,85 +279,73 @@ Respond ONLY in valid JSON:
         return self.generate_final_response(context)
 
     def generate_final_response(self, context: Dict[str, Any]) -> str:
-        """Generate human-readable response from collected data"""
-        query_analysis = context.get("query_analysis", {})
-        location = query_analysis.get("location", "the location")
-        
-        response_parts = []
-        response_parts.append(f"Here's what you can do tomorrow in {location}!")
-        
-        # Add weather information
-        if "weather_data" in context and context["weather_data"].get("success"):
-            weather = context["weather_data"]
-            tomorrow_forecast = weather["forecast"][0] if weather["forecast"] else None
+        """Generate natural, contextual response using LLM"""
+        try:
+            # Prepare context summary for LLM response generation
+            response_context = {
+                "original_query": context.get("query"),
+                "user_preferences": context.get("query_analysis", {}),
+                "weather_data": None,
+                "activities": [],
+                "errors": []
+            }
             
-            if tomorrow_forecast:
-                day_summary = tomorrow_forecast["day_summary"]
-                response_parts.append(
-                    f"\n**Tomorrow's Weather:**\n"
-                    f"   - {day_summary['condition']} with temperatures {day_summary['min_temp_c']}°C - {day_summary['max_temp_c']}°C\n"
-                    f"   - Chance of rain: {day_summary['chance_of_rain']}%"
-                )
-        
-        # Add activity recommendations
-        if "activity_data_list" in context:
-            all_activities = []
-            for activity_data in context["activity_data_list"]:
-                if activity_data.get("success"):
-                    all_activities.extend(activity_data["activities"])
+            # Add weather data if available
+            if "weather_data" in context and context["weather_data"].get("success"):
+                weather = context["weather_data"]
+                forecast = weather.get("forecast", [])
+                if forecast:
+                    response_context["weather_data"] = {
+                        "location": weather["location"]["name"],
+                        "condition": forecast[0]["day_summary"]["condition"],
+                        "temp_range": f"{forecast[0]['day_summary']['min_temp_c']}°C - {forecast[0]['day_summary']['max_temp_c']}°C",
+                        "rain_chance": forecast[0]["day_summary"]["chance_of_rain"]
+                    }
             
-            if all_activities:
-                # Deduplicate activities by name
-                unique_activities = []
+            # Collect all unique activities
+            if "activity_data_list" in context:
+                all_activities = []
+                for activity_data in context["activity_data_list"]:
+                    if activity_data.get("success"):
+                        all_activities.extend(activity_data["activities"])
+                
+                # Deduplicate by name
                 seen_names = set()
+                unique_activities = []
                 for activity in all_activities:
                     if activity["name"] not in seen_names:
-                        unique_activities.append(activity)
+                        unique_activities.append({
+                            "name": activity["name"],
+                            "category": activity["category"],
+                            "description": activity["description"]
+                        })
                         seen_names.add(activity["name"])
                 
-                response_parts.append("\n**Recommended Activities:**")
-                for i, activity in enumerate(unique_activities[:8], 1):  # Limit to 8
-                    response_parts.append(
-                        f"   {i}. **{activity['name']}** ({activity['category']})\n"
-                        f"      {activity['description']}"
-                    )
-        
-        # Add weather advice
-        if "weather_data" in context and context["weather_data"].get("success"):
-            weather = context["weather_data"]
-            tomorrow_forecast = weather["forecast"][0] if weather["forecast"] else None
-            if tomorrow_forecast:
-                advice = self.get_weather_advice(tomorrow_forecast["day_summary"])
-                response_parts.append(f"\n**Weather Tip:** {advice}")
-        
-        # Handle errors
-        errors = []
-        if "weather_data" in context and not context["weather_data"].get("success"):
-            errors.append(f"Weather: {context['weather_data'].get('error')}")
-        if "activity_data" in context and not context["activity_data"].get("success"):
-            errors.append(f"Activities: {context['activity_data'].get('error')}")
-        
-        if errors:
-            response_parts.append(f"\n**Note:** {'; '.join(errors)}")
-        
-        return "\n".join(response_parts)
+                response_context["activities"] = unique_activities[:8]
+            
+            # Collect errors
+            if "weather_data" in context and not context["weather_data"].get("success"):
+                response_context["errors"].append(f"Weather data unavailable: {context['weather_data'].get('error')}")
+            if "activity_data" in context and not context["activity_data"].get("success"):
+                response_context["errors"].append(f"Activity data unavailable: {context['activity_data'].get('error')}")
+            
+            # Generate natural response using LLM
+            response = self.openai_client.chat.completions.create(
+                model=AGENT_CONFIG["model"],
+                messages=[
+                    {"role": "system", "content": RESPONSE_GENERATOR_PROMPT},
+                    {"role": "user", "content": f"Context: {json.dumps(response_context, indent=2)}"}
+                ],
+                temperature=0.5  # Slightly more creative for natural responses
+            )
+            
+            return response.choices[0].message.content.strip()
+            
+        except Exception as e:
+            print(f"Response generation failed: {e}")
+            # Fallback to simple response
+            return f"I encountered an error while preparing your response. Please try asking again."
 
-    def get_weather_advice(self, day_summary: Dict[str, Any]) -> str:
-        """Generate weather-specific advice"""
-        condition = day_summary["condition"].lower()
-        temp_max = day_summary["max_temp_c"]
-        chance_of_rain = day_summary["chance_of_rain"]
-        
-        if chance_of_rain > 70:
-            return f"High chance of rain ({chance_of_rain}%). Great day for indoor activities or bring an umbrella!"
-        elif "sunny" in condition or "clear" in condition:
-            return f"Perfect sunny weather! Ideal for outdoor activities. Don't forget sunscreen."
-        elif temp_max > 30:
-            return f"Hot day ahead ({temp_max}°C). Consider early morning or late afternoon outdoor activities."
-        elif temp_max < 10:
-            return f"Chilly day ({temp_max}°C). Layer up and consider warm indoor venues."
-        else:
-            return f"Pleasant weather ({temp_max}°C). Great for any type of activity!"
 
     async def chat(self):
         """Interactive chat interface"""

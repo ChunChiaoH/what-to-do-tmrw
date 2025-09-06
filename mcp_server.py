@@ -32,52 +32,25 @@ WEATHER_BASE_URL = "http://api.weatherapi.com/v1"
 FOURSQUARE_API_KEY = os.getenv("FOURSQUARE_API_KEY")
 FOURSQUARE_BASE_URL = "https://places-api.foursquare.com"
 
-# Category mappings for Foursquare API
+# Foursquare category mappings
 FOURSQUARE_CATEGORIES = {
     "indoor": {
-        "culture": ["10000", "10027", "10028", "10029"],  # Arts & Entertainment, Museums, Galleries, Libraries
-        "shopping": ["17000", "17001", "17069"],  # Retail, Shopping Malls, Markets
-        "entertainment": ["10000", "10032", "10041"],  # Entertainment, Movie Theaters, Gaming
-        "fitness": ["18000", "18021", "18001"],  # Sports & Recreation, Gyms, Fitness
-        "learning": ["12000", "12062"],  # Education, Classes
-        "relaxation": ["18058", "12000"]  # Spas, Wellness
+        "culture": ["10000", "10027", "10028", "10029"],
+        "shopping": ["17000", "17001", "17069"],
+        "entertainment": ["10000", "10032", "10041"],
+        "fitness": ["18000", "18021", "18001"],
+        "learning": ["12000", "12062"],
+        "relaxation": ["18058", "12000"]
     },
     "outdoor": {
-        "nature": ["16000", "16032", "16014"],  # Outdoors & Recreation, Parks, Gardens  
-        "water": ["16048", "16025"],  # Beaches, Water Sports
-        "adventure": ["16000", "16034"],  # Outdoors, Hiking
-        "sightseeing": ["15000", "15014"],  # Travel & Transport, Scenic Points
-        "fitness": ["18000", "18042"]  # Sports, Outdoor Sports
+        "nature": ["16000", "16032", "16014"],
+        "water": ["16048", "16025"],
+        "adventure": ["16000", "16034"],
+        "sightseeing": ["15000", "15014"],
+        "fitness": ["18000", "18042"]
     }
 }
 
-# Fallback activity data for when API is unavailable
-FALLBACK_ACTIVITIES = {
-    "indoor": [
-        {"name": "Visit Museums", "category": "culture", "description": "Explore local museums and galleries"},
-        {"name": "Shopping Malls", "category": "shopping", "description": "Browse shopping centers and markets"},
-        {"name": "Movie Theaters", "category": "entertainment", "description": "Watch latest movies in cinemas"},
-        {"name": "Indoor Climbing", "category": "fitness", "description": "Try rock climbing gyms"},
-        {"name": "Escape Rooms", "category": "entertainment", "description": "Solve puzzles with friends"},
-        {"name": "Cooking Classes", "category": "learning", "description": "Learn new culinary skills"},
-        {"name": "Art Galleries", "category": "culture", "description": "Appreciate local and international art"},
-        {"name": "Libraries & Bookstores", "category": "learning", "description": "Read and discover new books"},
-        {"name": "Spa & Wellness", "category": "relaxation", "description": "Relax and rejuvenate"},
-        {"name": "Indoor Sports", "category": "fitness", "description": "Bowling, pool, arcade games"}
-    ],
-    "outdoor": [
-        {"name": "Parks & Gardens", "category": "nature", "description": "Enjoy green spaces and botanical gardens"},
-        {"name": "Beach Activities", "category": "water", "description": "Swimming, surfing, beach volleyball"},
-        {"name": "Hiking Trails", "category": "adventure", "description": "Explore nature trails and scenic walks"},
-        {"name": "Outdoor Markets", "category": "shopping", "description": "Browse farmers markets and street vendors"},
-        {"name": "Picnic Spots", "category": "relaxation", "description": "Enjoy meals in scenic outdoor locations"},
-        {"name": "Cycling Routes", "category": "fitness", "description": "Bike through city paths and trails"},
-        {"name": "Outdoor Sports", "category": "fitness", "description": "Tennis, golf, football in parks"},
-        {"name": "River Activities", "category": "water", "description": "Kayaking, river cruises, fishing"},
-        {"name": "Scenic Viewpoints", "category": "sightseeing", "description": "Visit lookouts and observation decks"},
-        {"name": "Outdoor Festivals", "category": "entertainment", "description": "Attend local events and festivals"}
-    ]
-}
 
 
 @server.list_tools()
@@ -158,7 +131,6 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
 def parse_target_date(target_date: str) -> Dict[str, Any]:
     """Parse target date string and return date info"""
     from datetime import datetime, timedelta
-    import re
     
     today = datetime.now().date()
     result = {"date": None, "description": target_date or "tomorrow"}
@@ -190,7 +162,7 @@ def parse_target_date(target_date: str) -> Dict[str, Any]:
 
 
 async def weather_api_tool(arguments: dict) -> list[TextContent]:
-    """Weather API MCP Tool - Gets weather data from WeatherAPI.com with flexible date support"""
+    """Weather API MCP Tool - Gets weather data from WeatherAPI.com"""
     location = arguments.get("location")
     forecast_days = arguments.get("forecast_days", 3)
     target_date = arguments.get("target_date")
@@ -198,7 +170,6 @@ async def weather_api_tool(arguments: dict) -> list[TextContent]:
     
     if not location:
         return [TextContent(type="text", text=json.dumps({"error": "Location is required"}))]
-    
     if not WEATHER_API_KEY:
         return [TextContent(type="text", text=json.dumps({"error": "Weather API key not configured"}))]
     
@@ -207,17 +178,17 @@ async def weather_api_tool(arguments: dict) -> list[TextContent]:
         date_info = parse_target_date(target_date)
         target_date_obj = date_info["date"]
         
-        # WeatherAPI.com endpoint for current weather + forecast
-        url = f"{WEATHER_BASE_URL}/forecast.json"
-        params = {
-            "key": WEATHER_API_KEY,
-            "q": location,
-            "days": min(forecast_days, 10),  # WeatherAPI.com supports up to 10 days
-            "aqi": "no",  # We don't need air quality data
-            "alerts": "no"  # We don't need weather alerts
-        }
-        
-        response = requests.get(url, params=params)
+        # Get weather data
+        response = requests.get(
+            f"{WEATHER_BASE_URL}/forecast.json",
+            params={
+                "key": WEATHER_API_KEY,
+                "q": location,
+                "days": min(forecast_days, 10),
+                "aqi": "no",
+                "alerts": "no"
+            }
+        )
         response.raise_for_status()
         data = response.json()
         
@@ -307,50 +278,41 @@ async def get_foursquare_places(location: str, activity_type: str, category: str
         return []
     
     try:
-        # Determine categories to search for
-        categories = []
-        if category and activity_type in FOURSQUARE_CATEGORIES:
-            if category in FOURSQUARE_CATEGORIES[activity_type]:
-                categories = FOURSQUARE_CATEGORIES[activity_type][category]
+        # Get category IDs to search for
+        type_categories = FOURSQUARE_CATEGORIES.get(activity_type, {})
+        if category and category in type_categories:
+            categories = type_categories[category]
         else:
-            # Get all categories for the activity type
-            if activity_type in FOURSQUARE_CATEGORIES:
-                for cat_list in FOURSQUARE_CATEGORIES[activity_type].values():
-                    categories.extend(cat_list)
+            categories = [cat for cat_list in type_categories.values() for cat in cat_list]
         
         if not categories:
             return []
         
-        # Search places using Foursquare Places API
-        url = f"{FOURSQUARE_BASE_URL}/places/search"
-        headers = {
-            "Authorization": f"Bearer {FOURSQUARE_API_KEY}",
-            "accept": "application/json",
-            "X-Places-Api-Version": "2025-06-17"
-        }
-        params = {
-            "near": location,  # Use "near" parameter for location
-            "categories": ",".join(categories[:5]),  # Limit categories  
-            "limit": 10
-        }
-        
-        response = requests.get(url, headers=headers, params=params)
+        # Call Foursquare API
+        response = requests.get(
+            f"{FOURSQUARE_BASE_URL}/places/search",
+            headers={
+                "Authorization": f"Bearer {FOURSQUARE_API_KEY}",
+                "accept": "application/json",
+                "X-Places-Api-Version": "2025-06-17"
+            },
+            params={
+                "near": location,
+                "categories": ",".join(categories[:5]),
+                "limit": 10
+            }
+        )
         response.raise_for_status()
         data = response.json()
         
         # Format results
-        places = []
-        for result in data.get("results", []):
-            place = {
-                "name": result["name"],
-                "category": category or "general",
-                "description": result.get("location", {}).get("formatted_address", ""),
-                "rating": result.get("rating", 0) / 10.0 if result.get("rating") else None,  # Convert to 0-1 scale
-                "source": "foursquare"
-            }
-            places.append(place)
-        
-        return places[:8]  # Limit to 8 results
+        return [{
+            "name": result["name"],
+            "category": category or "general",
+            "description": result.get("location", {}).get("formatted_address", ""),
+            "rating": result.get("rating", 0) / 10.0 if result.get("rating") else None,
+            "source": "foursquare"
+        } for result in data.get("results", [])][:8]
         
     except Exception as e:
         print(f"Foursquare API error: {e}")
@@ -365,60 +327,47 @@ async def activity_api_tool(arguments: dict) -> list[TextContent]:
     category = arguments.get("category")
     
     try:
-        # Determine activity type based on weather if "both" is specified
-        resolved_activity_type = activity_type
+        # Auto-determine activity type from weather
+        resolved_type = activity_type
         if activity_type == "both":
-            if any(word in weather_condition for word in ["rain", "storm", "snow", "drizzle", "shower"]):
-                resolved_activity_type = "indoor"
-            elif any(word in weather_condition for word in ["sunny", "clear", "fair"]):
-                resolved_activity_type = "outdoor"
+            bad_weather = ["rain", "storm", "snow", "drizzle", "shower"]
+            good_weather = ["sunny", "clear", "fair"]
+            if any(word in weather_condition for word in bad_weather):
+                resolved_type = "indoor"
+            elif any(word in weather_condition for word in good_weather):
+                resolved_type = "outdoor"
         
-        recommended_activities = []
+        # Get activities from Foursquare
+        activities = []
+        if resolved_type in ["indoor", "outdoor"]:
+            activities = await get_foursquare_places(location, resolved_type, category)
+        elif resolved_type == "both":
+            indoor = await get_foursquare_places(location, "indoor", category)
+            outdoor = await get_foursquare_places(location, "outdoor", category)
+            activities = indoor[:4] + outdoor[:4]
         
-        # Try to get real data from Foursquare API
-        if resolved_activity_type in ["indoor", "outdoor"]:
-            foursquare_places = await get_foursquare_places(location, resolved_activity_type, category)
-            recommended_activities.extend(foursquare_places)
-        elif resolved_activity_type == "both":
-            # Get both indoor and outdoor activities
-            indoor_places = await get_foursquare_places(location, "indoor", category)
-            outdoor_places = await get_foursquare_places(location, "outdoor", category)
-            recommended_activities.extend(indoor_places[:4])
-            recommended_activities.extend(outdoor_places[:4])
+        if not activities:
+            print("No activities found from Foursquare API")
         
-        # Fallback to static data if API fails or no results
-        if not recommended_activities:
-            print("Using fallback activity data")
-            if resolved_activity_type == "both":
-                recommended_activities.extend(FALLBACK_ACTIVITIES["indoor"][:3])
-                recommended_activities.extend(FALLBACK_ACTIVITIES["outdoor"][:3])
-            elif resolved_activity_type in FALLBACK_ACTIVITIES:
-                recommended_activities = FALLBACK_ACTIVITIES[resolved_activity_type][:8]
-            
-            # Filter by category if specified
-            if category and recommended_activities:
-                recommended_activities = [act for act in recommended_activities if act["category"] == category]
-        
-        # Format the activity API response
-        activity_result = {
+        return [TextContent(type="text", text=json.dumps({
             "success": True,
             "location": location,
             "query_parameters": {
                 "weather_condition": weather_condition,
-                "requested_activity_type": arguments.get("activity_type", "both"),
-                "resolved_activity_type": resolved_activity_type,
+                "requested_activity_type": activity_type,
+                "resolved_activity_type": resolved_type,
                 "category_filter": category
             },
-            "activities": recommended_activities[:8],  # Limit to 8 results
-            "total_results": len(recommended_activities[:8]),
-            "data_source": "foursquare" if any(act.get("source") == "foursquare" for act in recommended_activities) else "fallback"
-        }
-        
-        return [TextContent(type="text", text=json.dumps(activity_result, indent=2))]
+            "activities": activities[:8],
+            "total_results": len(activities[:8]),
+            "data_source": "foursquare" if activities else "none"
+        }, indent=2))]
         
     except Exception as e:
-        error_result = {"success": False, "error": f"Activity API error: {str(e)}"}
-        return [TextContent(type="text", text=json.dumps(error_result))]
+        return [TextContent(type="text", text=json.dumps({
+            "success": False, 
+            "error": f"Activity API error: {str(e)}"
+        }))]
 
 
 async def main():
