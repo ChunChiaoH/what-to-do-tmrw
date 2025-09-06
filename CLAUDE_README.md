@@ -152,3 +152,25 @@ mcp_server/
 
 ## Current Status
 **Production-ready agent** with clean modular architecture! ✅ All refactoring phases completed following 2025 MCP best practices.
+
+## Future Improvements
+
+### OpenAI Function Calling Migration
+**Priority:** High | **Effort:** Medium | **Status:** Planned
+
+Currently using prompt engineering for LLM decision making (returning JSON strings). Consider migrating to OpenAI's structured function calling for better reliability:
+
+**Benefits:**
+- More reliable than JSON parsing (no parse errors)
+- Built-in parameter validation 
+- Cleaner system prompts (focus on reasoning vs output format)
+- Type safety and constraints
+- Support for parallel function calls
+
+**Implementation:**
+- Create function schemas for `call_weather_api`, `call_activity_api`, `respond_to_user`
+- Replace decision engine prompt with function definitions
+- Update `decide_next_action()` to use `tools` parameter
+- Add proof of concept to validate approach
+
+**Impact:** Improved reliability and maintainability of agent decision making.

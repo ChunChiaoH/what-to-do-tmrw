@@ -87,15 +87,3 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
         
-    if st.button("View Logs"):
-        if os.path.exists("logs"):
-            import glob
-            log_files = glob.glob("logs/*.log")
-            if log_files:
-                st.write(f"Found {len(log_files)} log files:")
-                for log_file in log_files:
-                    st.write(f"- {log_file}")
-            else:
-                st.write("No log files found")
-        else:
-            st.write("Logs directory doesn't exist yet")
