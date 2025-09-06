@@ -164,7 +164,7 @@ def parse_target_date(target_date: str) -> Dict[str, Any]:
 async def weather_api_tool(arguments: dict) -> list[TextContent]:
     """Weather API MCP Tool - Gets weather data from WeatherAPI.com"""
     location = arguments.get("location")
-    forecast_days = arguments.get("forecast_days", 3)
+    forecast_days = arguments.get("forecast_days", 7)  # Default to 7 days to cover future dates
     target_date = arguments.get("target_date")
     include_hourly = arguments.get("include_hourly", True)
     

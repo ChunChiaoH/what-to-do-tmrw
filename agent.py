@@ -11,7 +11,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 import subprocess
 import sys
-from prompts import QUERY_ANALYZER_PROMPT, DECISION_ENGINE_PROMPT, RESPONSE_GENERATOR_PROMPT
+from prompts import get_query_analyzer_prompt, get_decision_engine_prompt, get_response_generator_prompt
 
 load_dotenv()
 
@@ -98,7 +98,7 @@ class WhatToDoAgent:
             response = self.openai_client.chat.completions.create(
                 model=AGENT_CONFIG["model"],
                 messages=[
-                    {"role": "system", "content": QUERY_ANALYZER_PROMPT},
+                    {"role": "system", "content": get_query_analyzer_prompt()},
                     {"role": "user", "content": query}
                 ],
                 temperature=AGENT_CONFIG["query_temperature"]
@@ -150,15 +150,15 @@ class WhatToDoAgent:
             response = self.openai_client.chat.completions.create(
                 model=AGENT_CONFIG["model"],
                 messages=[
-                    {"role": "system", "content": DECISION_ENGINE_PROMPT},
+                    {"role": "system", "content": get_decision_engine_prompt()},
                     {"role": "user", "content": f"Current context: {json.dumps(context_summary, indent=2)}"}
                 ],
                 temperature=AGENT_CONFIG["decision_temperature"]
             )
-            print('***************')
-            print(DECISION_ENGINE_PROMPT)
-            print('***************')
-            print(context_summary)
+            #print('***************')
+            #print(get_decision_engine_prompt())
+            #print('***************')
+            #print(context_summary)
             content = response.choices[0].message.content.strip()
             return json.loads(content)
             
@@ -237,10 +237,12 @@ class WhatToDoAgent:
             
             if decision["action"] == "call_weather_api":
                 print("Calling weather API...")
-                # Add target date from query analysis if not in params
+                # Use LLM-provided parameters, but add fallback logic
                 weather_params = decision.get("params", {})
-                if "target_date" not in weather_params:
-                    weather_params["target_date"] = query_analysis.get("time_context", "tomorrow")
+                if "target_date" not in weather_params and "time_context" in query_analysis:
+                    weather_params["target_date"] = query_analysis["time_context"]
+                elif "target_date" not in weather_params:
+                    weather_params["target_date"] = "tomorrow"  # Only as last resort
                 
                 result = await self.call_mcp_tool("weather_api", weather_params)
                 context["weather_data"] = result
@@ -294,12 +296,27 @@ class WhatToDoAgent:
             if "weather_data" in context and context["weather_data"].get("success"):
                 weather = context["weather_data"]
                 forecast = weather.get("forecast", [])
+                target_date_info = weather.get("target_date", {})
+                
                 if forecast:
+                    # Find the correct forecast day based on target date
+                    target_day_forecast = forecast[0]  # Default to first day
+                    target_date_str = target_date_info.get("resolved")
+                    
+                    if target_date_str:
+                        # Look for matching date in forecast
+                        for day_forecast in forecast:
+                            if day_forecast["date"] == target_date_str:
+                                target_day_forecast = day_forecast
+                                break
+                    
                     response_context["weather_data"] = {
                         "location": weather["location"]["name"],
-                        "condition": forecast[0]["day_summary"]["condition"],
-                        "temp_range": f"{forecast[0]['day_summary']['min_temp_c']}°C - {forecast[0]['day_summary']['max_temp_c']}°C",
-                        "rain_chance": forecast[0]["day_summary"]["chance_of_rain"]
+                        "target_date": target_date_info.get("requested", "unknown"),
+                        "condition": target_day_forecast["day_summary"]["condition"],
+                        "temp_range": f"{target_day_forecast['day_summary']['min_temp_c']}°C - {target_day_forecast['day_summary']['max_temp_c']}°C",
+                        "rain_chance": target_day_forecast["day_summary"]["chance_of_rain"],
+                        "date_found": target_day_forecast["date"] == target_date_str if target_date_str else True
                     }
             
             # Collect all unique activities
@@ -333,7 +350,7 @@ class WhatToDoAgent:
             response = self.openai_client.chat.completions.create(
                 model=AGENT_CONFIG["model"],
                 messages=[
-                    {"role": "system", "content": RESPONSE_GENERATOR_PROMPT},
+                    {"role": "system", "content": get_response_generator_prompt()},
                     {"role": "user", "content": f"Context: {json.dumps(response_context, indent=2)}"}
                 ],
                 temperature=0.5  # Slightly more creative for natural responses
