@@ -86,15 +86,69 @@ Agent Loop:
 Result: 6 activity recommendations with weather advice
 ```
 
-### Next Improvements
-- [ ] Implement external activity API (replace static data)
-- [ ] Support flexible dates (today, this weekend, next week, etc.)
-- [ ] Enhanced activity categorization and filtering
+### Latest Updates ✅
+- ✅ **Foursquare Integration**: Real activity data from Foursquare Places API
+- ✅ **Enhanced Variety**: Intelligent geographic and category diversification
+- ✅ **Date-Aware Intelligence**: LLM understands current date and time context
+- ✅ **Natural Responses**: LLM-powered conversational response generation
+- ✅ **Target Date Accuracy**: Weather API correctly handles "today", "tomorrow", "weekend", etc.
+
+## Code Refactoring Plan 🔧
+
+### Current Architecture Issues
+- **mcp_server.py**: 485 lines (too large)
+- **agent.py**: 408 lines (manageable but growing)
+- **Large functions**: `get_foursquare_places()` ~140 lines
+- **Mixed concerns**: API clients, business logic, configuration all mixed
+
+### Target Structure (Following MCP Best Practices)
+```
+mcp_server/
+├── server.py              # Main MCP server entry point
+├── tools/                 # Tool implementations
+│   ├── weather_tool.py     # Weather API tool
+│   └── activity_tool.py    # Activity API tool
+├── api_clients/           # External API clients
+│   ├── weather_client.py   # WeatherAPI.com client
+│   └── foursquare_client.py # Foursquare API client
+├── utils/                 # Utility functions
+│   ├── date_utils.py       # Date parsing logic
+│   └── location_utils.py   # Geographic utilities
+├── config/               # Configuration
+│   └── categories.py      # Foursquare categories
+└── prompts.py            # Centralized prompts
+```
+
+### Refactoring Phases
+
+**Phase 1: Split Large Functions** ✅ *COMPLETED*
+- ✅ Break down `get_foursquare_places()` into 4 smaller functions
+- ✅ Extract coordinate mapping logic
+- ✅ Extract result processing and variety algorithms
+- ✅ Maintain same interface for backward compatibility
+
+**Phase 2: Extract Configuration & Utilities** ✅ *COMPLETED*
+- ✅ Move `FOURSQUARE_CATEGORIES` to `config/categories.py`
+- ✅ Extract `parse_target_date()` to `utils/date_utils.py`
+- ✅ Create reusable utility functions
+
+**Phase 3: Full Module Restructure** ✅ *COMPLETED*
+- ✅ Split tools into separate files
+- ✅ Extract API clients from tools
+- ✅ Implement central server pattern
+- ✅ Remove old monolithic mcp_server.py
+
+### Benefits of Refactoring
+- ✅ **Testability**: Each module can be unit tested
+- ✅ **Maintainability**: Smaller, focused files (< 200 lines each)
+- ✅ **Reusability**: API clients usable across multiple tools
+- ✅ **Scalability**: Easy to add new tools and features
+- ✅ **Standards Compliance**: Follows 2025 MCP best practices
 
 ### API Keys Required
 - WEATHERAPI_KEY (weatherapi.com)
 - OPENAI_API_KEY (for LLM decision making)
-- Note: activity_api uses local data (no external API key needed)
+- FOURSQUARE_API_KEY (for real activity data)
 
 ## Current Status
-Building the agent loop implementation with iterative decision making capabilities.
+**Production-ready agent** with clean modular architecture! ✅ All refactoring phases completed following 2025 MCP best practices.

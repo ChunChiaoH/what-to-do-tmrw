@@ -32,7 +32,7 @@ class WhatToDoAgent:
         """Start the MCP server as a subprocess and initialize connection"""
         try:
             self.mcp_server_process = subprocess.Popen(
-                [sys.executable, "mcp_server.py"],
+                [sys.executable, "server.py"],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -128,7 +128,7 @@ class WhatToDoAgent:
             if weather.get("success"):
                 context_summary["data_collected"]["weather"] = {
                     "location": weather["location"]["name"],
-                    "current_condition": weather["current_weather"]["condition"],
+                    "current_condition": weather["current"]["condition"],
                     "tomorrow_forecast": weather["forecast"][0]["day_summary"]["condition"] if weather["forecast"] else "no_forecast"
                 }
             else:
