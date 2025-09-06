@@ -272,21 +272,79 @@ async def weather_api_tool(arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps(error_result))]
 
 
-async def get_foursquare_places(location: str, activity_type: str, category: str = None) -> List[Dict]:
-    """Get places from Foursquare API"""
+async def get_foursquare_places(location: str, activity_type: str, category: str = None, variety: bool = True) -> List[Dict]:
+    """Get places from Foursquare API with variety options"""
     if not FOURSQUARE_API_KEY:
         return []
     
     try:
+        import random
+        
         # Get category IDs to search for
         type_categories = FOURSQUARE_CATEGORIES.get(activity_type, {})
         if category and category in type_categories:
             categories = type_categories[category]
         else:
-            categories = [cat for cat_list in type_categories.values() for cat in cat_list]
+            # If no specific category, pick 2-3 random category types for variety
+            if variety and len(type_categories) > 2:
+                selected_category_types = random.sample(list(type_categories.keys()), min(3, len(type_categories)))
+                categories = []
+                for cat_type in selected_category_types:
+                    categories.extend(type_categories[cat_type])
+            else:
+                categories = [cat for cat_list in type_categories.values() for cat in cat_list]
         
         if not categories:
             return []
+        
+        # Add variety to search parameters
+        if variety:
+            # Either use 'near' for broad area search OR use lat/lng with radius for specific area
+            use_radius = random.choice([True, False])
+            if use_radius:
+                # For Sydney, use approximate coordinates with radius
+                # In production, you'd geocode the location first
+                city_coords = {
+                    "sydney": (-33.8688, 151.2093),
+                    "melbourne": (-37.8136, 144.9631), 
+                    "brisbane": (-27.4698, 153.0251),
+                    "perth": (-31.9505, 115.8605),
+                    "adelaide": (-34.9285, 138.6007)
+                }
+                location_lower = location.lower()
+                if location_lower in city_coords:
+                    lat, lng = city_coords[location_lower]
+                    radius_options = [2000, 5000, 10000, 20000]  # 2km, 5km, 10km, 20km
+                    params = {
+                        "ll": f"{lat},{lng}",
+                        "radius": random.choice(radius_options),
+                        "categories": ",".join(categories[:5]),
+                        "limit": 15,
+                    }
+                else:
+                    # Fall back to 'near' if we don't have coordinates
+                    params = {
+                        "near": location,
+                        "categories": ",".join(categories[:5]),
+                        "limit": 15,
+                    }
+            else:
+                # Use broad 'near' search
+                params = {
+                    "near": location,
+                    "categories": ",".join(categories[:5]),
+                    "limit": 15,
+                }
+        else:
+            # Simple search without variety
+            params = {
+                "near": location,
+                "categories": ",".join(categories[:5]),
+                "limit": 15,
+            }
+        
+        # Debug: show what we're searching for
+        print(f"Foursquare search: {location}, categories: {params['categories'][:50]}..., radius: {params.get('radius', 'default')}, intent: {params.get('intent', 'default')}")
         
         # Call Foursquare API
         response = requests.get(
@@ -296,23 +354,59 @@ async def get_foursquare_places(location: str, activity_type: str, category: str
                 "accept": "application/json",
                 "X-Places-Api-Version": "2025-06-17"
             },
-            params={
-                "near": location,
-                "categories": ",".join(categories[:5]),
-                "limit": 10
-            }
+            params=params
         )
+        if response.status_code != 200:
+            print(f"Foursquare API error {response.status_code}: {response.text}")
         response.raise_for_status()
         data = response.json()
         
-        # Format results
-        return [{
-            "name": result["name"],
-            "category": category or "general",
-            "description": result.get("location", {}).get("formatted_address", ""),
-            "rating": result.get("rating", 0) / 10.0 if result.get("rating") else None,
-            "source": "foursquare"
-        } for result in data.get("results", [])][:8]
+        # Format and diversify results
+        places = []
+        results = data.get("results", [])
+        
+        if variety and len(results) > 8:
+            # Select a diverse mix instead of just first 8
+            # Take some top results and some random ones
+            top_results = results[:5]
+            remaining_results = results[5:]
+            if remaining_results:
+                random_results = random.sample(remaining_results, min(3, len(remaining_results)))
+                selected_results = top_results + random_results
+            else:
+                selected_results = top_results
+            
+            # Shuffle for variety in presentation
+            random.shuffle(selected_results)
+        else:
+            selected_results = results[:8]
+        
+        for result in selected_results:
+            # Determine category from Foursquare categories
+            result_category = category or "general"
+            if result.get("categories"):
+                # Try to map Foursquare category to our category names
+                fs_category = result["categories"][0].get("name", "").lower()
+                if "museum" in fs_category or "gallery" in fs_category or "theater" in fs_category:
+                    result_category = "culture"
+                elif "shop" in fs_category or "mall" in fs_category or "market" in fs_category:
+                    result_category = "shopping"
+                elif "restaurant" in fs_category or "bar" in fs_category or "cafe" in fs_category:
+                    result_category = "dining"
+                elif "gym" in fs_category or "sport" in fs_category:
+                    result_category = "fitness"
+                elif "park" in fs_category or "garden" in fs_category:
+                    result_category = "nature"
+            
+            places.append({
+                "name": result["name"],
+                "category": result_category,
+                "description": result.get("location", {}).get("formatted_address", ""),
+                "rating": result.get("rating", 0) / 10.0 if result.get("rating") else None,
+                "source": "foursquare"
+            })
+        
+        return places[:8]  # Limit to 8 results
         
     except Exception as e:
         print(f"Foursquare API error: {e}")
@@ -337,13 +431,13 @@ async def activity_api_tool(arguments: dict) -> list[TextContent]:
             elif any(word in weather_condition for word in good_weather):
                 resolved_type = "outdoor"
         
-        # Get activities from Foursquare
+        # Get activities from Foursquare with variety
         activities = []
         if resolved_type in ["indoor", "outdoor"]:
-            activities = await get_foursquare_places(location, resolved_type, category)
+            activities = await get_foursquare_places(location, resolved_type, category, variety=True)
         elif resolved_type == "both":
-            indoor = await get_foursquare_places(location, "indoor", category)
-            outdoor = await get_foursquare_places(location, "outdoor", category)
+            indoor = await get_foursquare_places(location, "indoor", category, variety=True)
+            outdoor = await get_foursquare_places(location, "outdoor", category, variety=True)
             activities = indoor[:4] + outdoor[:4]
         
         if not activities:
