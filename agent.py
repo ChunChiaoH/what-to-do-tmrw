@@ -17,6 +17,18 @@ from config.logging_config import setup_logging
 
 load_dotenv()
 
+# For Streamlit Cloud compatibility
+try:
+    import streamlit as st
+    # Try to get API keys from Streamlit secrets first
+    if hasattr(st, 'secrets'):
+        os.environ.setdefault('OPENAI_API_KEY', st.secrets.get('OPENAI_API_KEY', ''))
+        os.environ.setdefault('WEATHERAPI_KEY', st.secrets.get('WEATHERAPI_KEY', ''))
+        os.environ.setdefault('FOURSQUARE_API_KEY', st.secrets.get('FOURSQUARE_API_KEY', ''))
+except ImportError:
+    # Not running in Streamlit environment
+    pass
+
 # Agent configuration
 AGENT_CONFIG = {
     "model": "gpt-3.5-turbo",

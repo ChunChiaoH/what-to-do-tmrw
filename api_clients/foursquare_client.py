@@ -13,7 +13,12 @@ class FoursquareClient:
     """Client for Foursquare Places API"""
     
     def __init__(self):
-        self.api_key = os.getenv("FOURSQUARE_API_KEY")
+        # Try Streamlit secrets first, then environment variables
+        try:
+            import streamlit as st
+            self.api_key = st.secrets.get("FOURSQUARE_API_KEY") or os.getenv("FOURSQUARE_API_KEY")
+        except (ImportError, AttributeError):
+            self.api_key = os.getenv("FOURSQUARE_API_KEY")
         self.base_url = "https://places-api.foursquare.com"
         self.logger = logging.getLogger('api_clients.foursquare')
     

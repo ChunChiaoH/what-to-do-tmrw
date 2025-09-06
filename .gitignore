@@ -30,6 +30,9 @@ venv.bak/
 # Environment Variables
 .env
 
+# Streamlit secrets (local only)
+.streamlit/secrets.toml
+
 # IDE
 .vscode/
 .idea/

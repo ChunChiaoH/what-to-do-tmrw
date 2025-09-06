@@ -11,7 +11,12 @@ class WeatherAPIClient:
     """Client for WeatherAPI.com service"""
     
     def __init__(self):
-        self.api_key = os.getenv("WEATHERAPI_KEY")
+        # Try Streamlit secrets first, then environment variables
+        try:
+            import streamlit as st
+            self.api_key = st.secrets.get("WEATHERAPI_KEY") or os.getenv("WEATHERAPI_KEY")
+        except (ImportError, AttributeError):
+            self.api_key = os.getenv("WEATHERAPI_KEY")
         self.base_url = "http://api.weatherapi.com/v1"
     
     async def get_forecast(self, location: str, forecast_days: int = 7, target_date: str = None, include_hourly: bool = True) -> Dict[str, Any]:
