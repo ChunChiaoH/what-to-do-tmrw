@@ -104,7 +104,7 @@ Result: 6 activity recommendations with weather advice
 ### Target Structure (Following MCP Best Practices)
 ```
 mcp_server/
-├── server.py              # Main MCP server entry point
+├── mcp_server.py          # Main MCP server entry point
 ├── tools/                 # Tool implementations
 │   ├── weather_tool.py     # Weather API tool
 │   └── activity_tool.py    # Activity API tool
